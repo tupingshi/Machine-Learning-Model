@@ -1,0 +1,166 @@
+import os
+import numpy as np
+import pandas as pd
+from sklearn import datasets
+from sklearn.preprocessing import StandardScaler  #标准化
+from sklearn.preprocessing import Imputer  #处理缺失值
+from sklearn.feature_selection import VarianceThreshold  #方差选择法
+from scipy import stats #计算皮尔森相关系数
+from minepy import MINE  #互信息法
+from sklearn.linear_model import LogisticRegression
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import SelectFromModel  
+from sklearn.decomposition import PCA  
+from sklearn.cross_validation import train_test_split
+from sklearn.metrics import f1_score
+
+os.chdir("C:\\Users\\Pingshi Tu\\Desktop\\python")
+
+#定义一个皮尔森相关系数的函数
+def pearson_correlation(X):
+    corr = np.zeros((X.shape[1],X.shape[1]))
+    p_value = np.zeros((X.shape[1],X.shape[1]))
+    for row in range(X.shape[1]):
+        for col in range(X.shape[1]):
+            #计算皮尔森相关系数
+            corr[row,col] = stats.pearsonr(X[:,row], X[:,col])[0]
+            #计算相关系数的P值
+            p_value[row,col] = stats.pearsonr(X[:,row], X[:,col])[1]
+    #记录每个相关系数比较高的变量出现的次数
+    location = []
+    for row in range(X.shape[1]):
+        for col in range(X.shape[1]):
+            if row == col:
+                pass
+            else:
+                if p_value[row,col] <= 0.1:
+                    location = location + [[row,col]]
+    #去掉后一半的location，因为后一半与前一半重复了
+    location = location[0:int(len(location)/2 - 1)]                
+    #将list变成array形式
+    a = np.zeros((len(location),2))
+    for row in range(len(location)):
+        for col in range(2):
+            a[row,col] = location[row][col]
+    b = np.hstack((a[:,0],a[:,1]))            
+    location = np.array(pd.DataFrame(b).iloc[:,0].value_counts(ascending = False))
+    frequency = np.array(sorted(pd.DataFrame(b).iloc[:,0].unique(), reverse=True)).astype(np.int64)
+    frequency_and_location = np.vstack((location,frequency)).T
+    #记录频数超过1次的变量位置
+    record = []
+    for row in range(frequency_and_location.shape[0]):
+        if frequency_and_location[row,0] > 1:
+            record = record + [frequency_and_location[row,1]]
+    #删除频数大于1的变量
+    for row in range(len(record)):
+        i = record[row]
+        for rowrow in range(a.shape[0])[::-1]:
+            if a[rowrow,1] == i:
+                a = np.delete(a, rowrow, 0)
+    #现在仅剩下频数剩下1的变量，随便选一个加入record
+    if a.shape[0] == 0:
+        pass
+    else:
+        for row in range(a.shape[0]):
+            record = record + [a[row,0]]
+    #将record中所有变量删除
+    for row in range(len(record)):
+        i = record[row]
+        for rowrow in range(corr.shape[0])[::-1]:
+            if rowrow == i:
+                corr = np.delete(corr,rowrow,0)
+                corr = np.delete(corr,rowrow,1)
+                p_value = np.delete(p_value,rowrow,0)
+                p_value = np.delete(p_value,rowrow,1)
+                X = np.delete(X,rowrow,1)
+    return X
+
+def feature_engineering_by_LogisticRegression(threshold, C, X, Y):
+    #定义两个逻辑回归模型
+    LR_l1 = LogisticRegression(penalty='l1', C=C)
+    LR_l2 = LogisticRegression(penalty='l2', C=C)
+    #训练两个逻辑回归模型
+    LR_l1 = LR_l1.fit(X,Y)
+    LR_l2 = LR_l2.fit(X,Y)
+    #建立空矩阵储存一下新计算出的每个特征的权值系数
+    new_coef_matrix = np.zeros((LR_l1.coef_.shape[0],LR_l1.coef_.shape[1]))
+    for i in range(LR_l1.coef_.shape[0]):
+        for j in range(LR_l1.coef_.shape[1]):
+            coef = LR_l1.coef_[i,j]
+            #L1逻辑回归的权值系数不为0
+            if coef != 0:
+                idx = [j]
+                #对应在L2逻辑回归中的权值系数
+                coef1 = LR_l2.coef_[i,j]
+                for k in range(LR_l1.coef_.shape[1]):
+                    coef2 = LR_l2.coef_[i,k]
+                    #在L2逻辑回归中，权值系数之差小于设定的阈值，且在L1中对应的权值为0
+                    if abs(coef1-coef2) < threshold and j != k and LR_l1.coef_[i,k] == 0:
+                        idx.append(k)
+            #计算这一类特征的权值系数均值
+            mean = coef / len(idx)  
+            new_coef_matrix[i,idx] = mean
+    q = np.where(abs(new_coef_matrix) >= threshold)[1]
+    X = X[:,q]
+    return X
+
+def feature_engineering_01(X,Y,threshold,C,n_components):
+    #(1)数据预处理 
+    X = StandardScaler().fit_transform(X) #标准化，返回值为标准化后的数据 
+    if np.isnan(X.all()): #缺失值计算，参数strategy为缺失值填充方式，默认为mean（均值）  
+        X = Imputer().fit_transform(X)
+    #(2)特征选择
+    X = VarianceThreshold(threshold=0.5).fit_transform(X) #方差选择法
+    X = pearson_correlation(X) #用皮尔森相关系数剔除有共线性的变量
+    X = feature_engineering_by_LogisticRegression(threshold, C, X, Y) #用逻辑回归结合l1与l2剔除权值系数较小的变量
+    #(3)降维 
+    X = PCA(n_components=n_components).fit_transform(X) #主成分分析降维
+    #完成特征工程，输出即将进入训练模型的特征组合
+    return X
+
+#定义逻辑回归的十折交叉验证
+def tenfold_cross_validation_for_LogisticRegression(X,Y,a,b,c,d):
+    #建立空矩阵储存每一折计算出的f1score
+    f1score=np.zeros((1,10))
+    #开始十折交叉检验
+    for col in range(10):
+        train_parameter = np.hstack((np.array(pd.DataFrame(X_train)),np.array(pd.DataFrame(Y_train))))
+        train_parameter = pd.DataFrame(train_parameter).sample(frac=1).reset_index(drop=True)
+        #将训练集再分为训练集与调参集
+        X_train_train,X_train_test,Y_train_train,Y_train_test = train_test_split(train_parameter.iloc[:,0:-1], train_parameter.iloc[:,-1], test_size = 0.2, random_state=0)
+        #开始训练模型
+        lrmodel = LogisticRegression(penalty=a, solver=b, multi_class=c, C=d).fit(X_train_train,Y_train_train)
+        #预测
+        Y_predict = lrmodel.predict(X_train_test)
+        #计算f1score
+        f1score[0,col] = f1_score(Y_train_test,Y_predict)
+    #计算十个f1score的均值
+    mean_f1score = np.mean(f1score)
+    return mean_f1score
+
+#定义逻辑回归的网格搜索，搜索出最佳参数
+def grid_search_for_LogisticRegression(X,Y):
+    parameter=[]
+    f1score=[]
+    for a in ['l1','l2']:
+        for b in ['newton-cg','lbfgs','liblinear','sag']:
+            for c in ['ovr','multinomial']:
+                for d in [0.1,0.5,1]:
+                    if a == 'l1' and b != 'liblinear':
+                        pass
+                    elif b == 'liblinear' and c == 'multinomial':
+                        pass
+                    else:
+                        parameter = parameter + [a,b,c,d]
+                        f1score = f1score + [tenfold_cross_validation_for_LogisticRegression(X,Y,a,b,c,d)]
+    f1score = np.array(f1score)
+    #找出最佳f1score的参数组合
+    q = int(np.array(np.where(f1score == f1score.max())))
+    best_parameter = parameter[(q+1)*4-4:(q+1)*4]
+    #用最佳参数训练模型
+    lrmodel = LogisticRegression(penalty=parameter[0], solver=parameter[1], multi_class=parameter[2], C=parameter[3]).fit(X_train,Y_train)
+    #预测
+    Y_predict = lrmodel.predict(X_test)
+    #计算f1score
+    f1score_final=f1_score(Y_test,Y_predict)
+    return f1score_final
