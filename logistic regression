@@ -1,0 +1,46 @@
+#定义逻辑回归的十折交叉验证
+def tenfold_cross_validation_for_LogisticRegression(X,Y,a,b,c,d):
+    #建立空矩阵储存每一折计算出的f1score
+    f1score=np.zeros((1,10))
+    #开始十折交叉检验
+    for col in range(10):
+        train_parameter = np.hstack((np.array(pd.DataFrame(X_train)),np.array(pd.DataFrame(Y_train))))
+        train_parameter = pd.DataFrame(train_parameter).sample(frac=1).reset_index(drop=True)
+        #将训练集再分为训练集与调参集
+        X_train_train,X_train_test,Y_train_train,Y_train_test = train_test_split(train_parameter.iloc[:,0:-1], train_parameter.iloc[:,-1], test_size = 0.2, random_state=0)
+        #开始训练模型
+        lrmodel = LogisticRegression(penalty=a, solver=b, multi_class=c, C=d).fit(X_train_train,Y_train_train)
+        #预测
+        Y_predict = lrmodel.predict(X_train_test)
+        #计算f1score
+        f1score[0,col] = f1_score(Y_train_test,Y_predict)
+    #计算十个f1score的均值
+    mean_f1score = np.mean(f1score)
+    return mean_f1score
+
+#定义逻辑回归的网格搜索，搜索出最佳参数
+def grid_search_for_LogisticRegression(X,Y):
+    parameter=[]
+    f1score=[]
+    for a in ['l1','l2']:
+        for b in ['newton-cg','lbfgs','liblinear','sag']:
+            for c in ['ovr','multinomial']:
+                for d in [0.1,0.5,1]:
+                    if a == 'l1' and b != 'liblinear':
+                        pass
+                    elif b == 'liblinear' and c == 'multinomial':
+                        pass
+                    else:
+                        parameter = parameter + [a,b,c,d]
+                        f1score = f1score + [tenfold_cross_validation_for_LogisticRegression(X,Y,a,b,c,d)]
+    f1score = np.array(f1score)
+    #找出最佳f1score的参数组合
+    q = int(np.array(np.where(f1score == f1score.max())))
+    best_parameter = parameter[(q+1)*4-4:(q+1)*4]
+    #用最佳参数训练模型
+    lrmodel = LogisticRegression(penalty=parameter[0], solver=parameter[1], multi_class=parameter[2], C=parameter[3]).fit(X_train,Y_train)
+    #预测
+    Y_predict = lrmodel.predict(X_test)
+    #计算f1score
+    f1score_final=f1_score(Y_test,Y_predict)
+    return f1score_final
