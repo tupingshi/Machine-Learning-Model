@@ -15,7 +15,7 @@ class LR_with_XFoldCrossValidation_and_GridSearch():
                         else:
                             parameter = parameter + [a, b, c, d]
                             #定义逻辑回归的十折交叉验证
-                            def tenfold_cross_validation(self, X, Y, a, b, c, d):
+                            def tenfold_cross_validation(X, Y, a, b, c, d):
                                 #建立空矩阵储存每一折计算出的f1score
                                 f1score=np.zeros((1, 10))
                                 #开始十折交叉检验
